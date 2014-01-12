@@ -24,59 +24,122 @@ from traitsui.api import View, Item
 #============= local library imports  ==========================
 
 class GitEngine(HasTraits):
-    adapter=Any
+    adapter = Any
 
     def commit_tree(self, msg, tree_id):
+        if not tree_id:
+            return
+
         author = 'foo'
 
         commits = self.adapter.get_collection('commits')
         p = self.adapter._get_last('commits')
-        commits.insert({
-                        'pid': p['_id'] if p else None,
-                        'tid': tree_id,
-                        'msg': msg,
-                        'author': author,
-                        })
+        tree = self._get_tree(tree_id)
 
-    def add_tree(self,name, blobs=None, trees=None):
-        objects=self.adapter.get_collection('objects')
-        print 'asf', name
-        obj=objects.insert({'name':name,
-                            'blobs':blobs,
-                            'trees':trees})
+        commits.insert({
+            'pid': p['_id'] if p else None,
+            'tid': tree['_id'],
+            'msg': msg,
+            'author': author })
+
+    def add_tree(self, name, blobs=None, trees=None):
+        objects = self.adapter.get_collection('objects')
+
+        obj = objects.insert({'name': name,
+                              'kind': 'tree',
+                              'blobs': blobs,
+                              'trees': trees})
         return obj
 
-    def add_blob(self, tree, name, text):
-        tree=self._get_tree(tree)
-        blobs=tree['blobs']
-        if not blobs:
-            blobs=[]
+    def add_subtree(self, parent, name, blobs=None, trees=None):
+        tree = self._get_tree(parent)
 
-        objs=self.adapter.get_collection('objects')
-        gid=self._digest(name, text)
+        objs = self.adapter.get_collection('objects')
+        if trees:
+            trees=[self._get_tree(ti)['_id'] for ti in trees]
 
-        r=objs.find_one({'gid':gid})
+        ntid = objs.insert({'name': name,
+                            'kind': 'tree',
+                            'blobs': blobs,
+                            'trees': trees})
+
+        ptrees = tree['trees']
+        if not ptrees:
+            ptrees=[]
+
+        ptrees.append(ntid)
+        tree['trees'] = ptrees
+        tree.pop('_id')
+        return objs.insert(tree)
+
+    def modify_blob(self, tree, name, text):
+        tree = self._get_tree(tree)
+
+        objs = self.adapter.get_collection('objects')
+        r = objs.find_one({'name': name})
         if r:
-            bid=r['_id']
-            print 'already exists'
+            rid = r['_id']
+            if rid in tree['blobs']:
+                #insert new blob
+                r.pop('_id')
+                r['text'] = text
+                nid = objs.insert(r)
+
+                blobs = tree['blobs']
+                blobs.remove(rid)
+                blobs.append(nid)
+
+                #insert new tree
+                tree.pop('_id')
+                return objs.insert(tree)
+
+    def add_blob(self, tree, name, text, new_tree=True):
+        tree = self._get_tree(tree)
+        tid = tree['_id']
+        blobs = tree['blobs']
+
+        objs = self.adapter.get_collection('objects')
+        gid = self._digest(name, text)
+
+        r = objs.find_one({'gid': gid})
+        if r:
+            bid = r['_id']
         else:
-            bid=objs.insert({'name':name, 'text':text,
-                            'gid':gid})
-        if bid not in blobs:
+            bid = objs.insert({'name': name,
+                               'kind':'blob',
+                               'text': text,
+                               'gid': gid})
+
+        if not blobs:
+            #use existing tree doc
+            objs.update({'_id': tree['_id']},
+                        {'$set': {'blobs': [bid]}})
+        else:
             blobs.append(bid)
-            # tree['blobs']=blobs
-            # print tree['_id']
-            objs.update({'_id':tree['_id']},
-                        {'$set':{'blobs':blobs}})
+            if new_tree:
+                #add new tree
+                tree.pop('_id')
+                tree['blobs'] = blobs
+                tid = objs.insert(tree)
+            else:
+                objs.update(tree, {'$set': {'blobs': blobs}})
+
+        return tid
 
     def _get_tree(self, tid):
-        ts=self.adapter.get_collection('objects')
-        return ts.find_one({'_id':tid})
+        ts = self.adapter.get_collection('objects')
+        if isinstance(tid, str):
+            q = {'name': tid, 'kind':'tree'}
+        else:
+            q = {'_id': tid,  'kind':'tree'}
+
+        return list(ts.find(q).sort('_id', -1).limit(1))[0]
 
     def _digest(self, *args):
-        sha=hashlib.sha1()
+        sha = hashlib.sha1()
         for ai in args:
             sha.update(ai)
         return sha.hexdigest()
+
 #============= EOF =============================================
 

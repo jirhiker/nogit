@@ -45,10 +45,10 @@ class MongoAdapter(HasTraits):
 
     def _get_last(self, collection):
         """
-            return the last commit object by date
+            return the last document in collection
         """
         c=self._get_collection(collection)
-        r=c.find().sort('_id').limit(1)
+        r=c.find().sort('_id', -1).limit(1)
         try:
             return list(r)[0]
         except IndexError:
