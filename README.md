@@ -17,4 +17,30 @@ Collections
 5. index- contains staging area document
 
 
-use a serverless
+a serverless nosql database is run on each computer.
+a server nosql database is run on the server computer.
+
+all changes are committed to the local database.
+changes can be pushed, pulled, merged from the remote database
+
+phase 1. local
+--------------
+1. add branching
+2. add tagging
+3. add subtree
+4. add blob to subtree
+5. diff
+    a. blobs
+    b. trees
+6. merge
+7. rebase
+
+phase 2. remote
+----------------
+1. define remote
+2. pull -pull diff between remote and local
+    a. fetch
+    b. upsert
+3. push -push diff between local and remote
+4. identify conflicts
+    - commit on remote > last commit of local
