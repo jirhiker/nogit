@@ -54,7 +54,7 @@ class GitEngine(HasTraits):
             m.insert({'kind': 'index',
                       'trees': [], 'blobs': [], 'objects': []})
 
-        self.add_tree('/')
+        self.add_root()
 
     def add(self, parent, name, text):
         """
@@ -79,29 +79,49 @@ class GitEngine(HasTraits):
                 objects.append((parent, nbid, 'new file'))
                 col.update({'_id':idx['_id']}, {'$set':{'blobs':blobs, 'objects':objects}})
 
-                #add to working tree
-                wtree=self._get_working_tree()
-                blobs=wtree['blobs']
-                blobs.append(nbid)
-                objects_col.update({'_id':wtree['_id']}, {'$set':{'blobs':blobs}})
+                tree=self._get_tree(parent)
+                if not tree:
+                    ntid=self.add_tree(parent, kind='tree',blobs=[nbid])
+                    wtree = self._get_working_tree()
+                    trees=wtree['trees']
+                    trees.append(ntid)
+                    objects_col.update({'_id':wtree['_id']}, {'$set':{'trees':trees}})
+                else:
+                    blobs=tree['blobs']
+                    blobs.append(nbid)
+                    objects_col.update({'_id':tree['_id']}, {'$set':{'blobs':blobs}})
 
             else:
-                objects_col.update({'_id':blob['_id']}, {'$set': {'text':text, 'sha1':sha}})
+                # if blob is already in staging area
+                if self._is_staged(blob):
+                    objects_col.update({'_id':blob['_id']},
+                                       {'$set': {'text':text, 'sha1':sha}})
+                else:
+                    nbid = objects_col.insert(self._create_blob(parent, name, text))
+                    blobs.append(nbid)
+                    objects.append((parent, nbid, 'modified'))
+                    col.update({'_id': idx['_id']}, {'$set': {'blobs': blobs, 'objects': objects}})
 
+                    t=self._get_tree(parent)
+                    t.pop('_id')
+                    blobs=t['blobs']
+                    for bid in blobs:
+                        bi=objects_col.find_one({'_id':bid})
+                        if bi['path_sha1']==self._digest(parent, name):
+                            blobs.remove(bid)
 
-        #is sha already staged
-        # blob=col.find_one({'sha1':sha})
-        # if not blob:
-        #     #is this name already staged
-        #     blob=col.find_one({'path_sha1':self._digest(parent, name)})
-        #     if not blob:
-        #         nbid=objects_col.insert(self._create_blob(parent, name, text))
-        #         blobs.append(nbid)
-        #         objects.append((parent, nbid, 'new file'))
-        #
-        #         col.update({'_id':idx['_id']}, {'$set':{'blobs':blobs, 'objects':objects}})
-        #     else:
-        #         col.update({'_id':blob['_id']}, {'$set': {'text':text, 'sha1':sha}})
+                    blobs.append(nbid)
+                    t['blobs']=blobs
+                    ntid=objects_col.insert(t)
+                    wtree=self._get_working_tree()
+                    trees=wtree['trees']
+                    for tid in trees:
+                        tt=objects_col.find_one({'_id':tid})
+                        if tt['name']==parent:
+                            trees.remove(tid)
+                            trees.append(ntid)
+                            break
+                    objects_col.update({'_id':wtree['_id']},{'$set':{'trees':trees}})
 
     def commit(self, msg):
         """
@@ -111,11 +131,19 @@ class GitEngine(HasTraits):
             self.commit_tree(msg, wtree['_id'])
 
     #plumbing
-    def add_tree(self, name, kind='wtree'):
+    def add_root(self):
+        self.add_tree('/')
+
+    def add_tree(self, name, kind='wtree', blobs=None):
+        if blobs is None:
+            blobs=[]
+        # print name, self._get_tree(name)
         if not self._get_tree(name):
             objects=self.adapter.get_collection('objects')
-            objects.insert({'name':name, 'kind':kind,
-                            'blobs':[], 'trees':[]})
+            oid=objects.insert({'name':name, 'kind':kind,
+                            'blobs':blobs, 'trees':[]})
+            # return objects.find({'_id':oid})
+            return oid
 
     def add_ref(self, name, commit_id, kind='head'):
         col = self.adapter.get_collection('refs')
@@ -177,6 +205,14 @@ class GitEngine(HasTraits):
         return list(self._walk_commits())
 
     #private
+    def _is_staged(self, blob):
+        idx=self.get_index()
+        print idx['objects']
+        for _, oi,_ in idx['objects']:
+            print oi, blob['_id']
+            if oi == blob['_id']:
+                return True
+
     def _walk_commits(self):
         """
         """
@@ -209,39 +245,27 @@ class GitEngine(HasTraits):
     def _get_tree(self, name):
         if isinstance(name, (str, unicode)):
             wtree=self._get_working_tree()
-            if wtree and wtree['name']!=name:
-                col=self.adapter.get_collection('objects')
-                for p in name.split('/'):
-                    if not p:
-                        continue
+            # print name, wtree
+            if wtree:
+                if wtree['name']!=name:
+                    col=self.adapter.get_collection('objects')
+                    for p in name.split('/'):
+                        if not p:
+                            continue
 
-                    for ti in wtree['trees']:
-                        tt=col.find_one({'_id':ti})
-                        if tt['name']==name:
-                            wtree=tt
-            return wtree
-
+                        for ti in wtree['trees']:
+                            tt=col.find_one({'_id':ti})
+                            if tt['name']==name:
+                                return tt
+                else:
+                    return wtree
         else:
             objects=self.adapter.get_collection('objects')
             return objects.find_one({'_id':name})
 
     def _get_working_tree(self):
         objects=self.adapter.get_collection('objects')
-        #get the current commit
-        #get the tree from the current commit
         return objects.find_one({'kind':'wtree'})
-
-        # #if no current commit use latest root tree doc
-        # commits=self.adapter.get_collection('commits')
-        # if not commits.count():
-        #     cursor=objects.find({'kind':'tree','name':'/'}).sort('_id',-1).limit(1)
-        #     if cursor.count():
-        #         return cursor[0]
-        # else:
-        #     ref=self._get_head()['ref']
-        #     cid=self._get_ref(ref)['cid']
-        #     commit=commits.find_one({'_id':cid})
-        #     return objects.find_one({'_id':commit['tid']})
 
     def _create_blob(self, parent, name, text):
         sha=self._digest(parent, name, text)
