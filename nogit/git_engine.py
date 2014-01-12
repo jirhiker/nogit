@@ -22,6 +22,13 @@ from traitsui.api import View, Item
 
 #============= standard library imports ========================
 #============= local library imports  ==========================
+class NoBranchError(BaseException):
+    def __init__(self, name):
+        super(NoBranchError, self).__init__()
+        self._name = name
+
+    def __repr__(self):
+        return 'No branch named "{}"'.format(self._name)
 
 
 class GitEngine(HasTraits):
@@ -38,36 +45,78 @@ class GitEngine(HasTraits):
         """
             add some defaults
         """
-        m=self.adapter.get_collection('meta')
-        if not m.find_one({'name':'HEAD'}):
-            m.insert({'name':'HEAD','ref':'master','kind':'head'})
+        m = self.adapter.get_collection('meta')
+        if not m.find_one({'name': 'HEAD'}):
+            m.insert({'name': 'HEAD', 'ref': 'master', 'kind': 'head'})
 
         if not self._get_ref('master'):
             self.add_ref('master', None)
 
-    def add_tag(self, name, commit_id):
-        self.add_ref(name, commit_id, kind='tag')
+    def checkout(self, name):
+        """
+            checkout a ref. (branch or tag)
 
-    def add_ref(self, name, commit_id, kind='head'):
-        col = self.adapter.get_collection('refs')
-        col.insert({'cid': commit_id,
-                    'kind': kind,
-                    'name': name})
+        """
+        ref = self._get_ref(name)
+        if ref is None:
+            raise NoBranchError(name)
+        else:
+            self._update_head(ref['name'], ref['kind'])
+
+    def plog(self):
+        """
+            print the return of self.log
+        """
+        for p in self.log():
+            print p
+
+    def log(self):
+        """
+            return a list of formatted commit messages
+            author, date
+            sha1
+
+                message
+        """
+        template = '''commit {}
+Author: {}
+Date: {}
+
+    {}\n'''
+
+        def assemble_log(commit):
+            a = commit['author']
+            d = commit['_id'].generation_time
+            s = commit['_id']
+            m = commit['msg']
+            return template.format(s, a, d.strftime('%a %b %d %H:%M %Y'), m)
+
+        return [assemble_log(c) for c in self._walk_commits()]
+
+    def add_tag(self, name, commit_id):
+        return self.add_ref(name, commit_id, kind='tag')
 
     def add_branch(self, name, commit_id=None):
         """
             add a branch named ``name``. if commit_id is None use the latest commit
         """
         if not commit_id:
-            commit_id=self.adapter.get_last('commits')
+            commit_id = self.adapter.get_last('commits')['_id']
 
-        b= self.add_ref(name, commit_id)
+        b = self.add_ref(name, commit_id)
 
         #update HEAD
-        h=self.adapter.get_collection('HEAD')
-        h.update({'name':'HEAD'}, {'$set':{'ref':name, 'kind':'head'}})
-
+        self._update_head(name, 'head')
+        # h = self.adapter.get_collection('HEAD')
+        # h.update({'name': 'HEAD'}, {'$set': {'ref': name, 'kind': 'head'}})
+        # self.checkout(name)
         return b
+
+    def add_ref(self, name, commit_id, kind='head'):
+        col = self.adapter.get_collection('refs')
+        return col.insert({'cid': commit_id,
+                           'kind': kind,
+                           'name': name})
 
     def update_ref(self, name, commit_id):
         ref = self._get_ref(name)
@@ -94,8 +143,8 @@ class GitEngine(HasTraits):
             'author': author})
 
         #update the current head to point to latest reference
-        head=self._get_head()
-        self.update_ref(head, cid)
+        head = self._get_head()
+        self.update_ref(head['ref'], cid)
 
     def add_tree(self, name, blobs=None, trees=None):
         objects = self.adapter.get_collection('objects')
@@ -181,27 +230,55 @@ class GitEngine(HasTraits):
 
         return tid
 
+    def _walk_commits(self):
+        """
+
+        """
+
+        def gen():
+            head = self._get_head()
+            ref = head['ref']
+            ref = self._get_ref(ref)
+            cid = ref['cid']
+            while 1:
+                commit = self._get_commit(cid)
+                yield commit
+                cid = commit['pid']
+                if not cid:
+                    break
+
+        return gen()
+
+    def _get_commit(self, cid):
+        ts = self.adapter.get_collection('commits')
+        q = {'_id': cid}
+        return ts.find_one(q)
+
     def _get_ref(self, rid):
         ts = self.adapter.get_collection('refs')
-        if isinstance(rid, str):
+        if isinstance(rid, (str, unicode)):
             q = {'name': rid, 'kind': 'head'}
         else:
             q = {'_id': rid, 'kind': 'head'}
 
         return ts.find_one(q)
-        # return list(ts.find(q).sort('_id', -1).limit(1))[0]
 
     def _get_tree(self, tid):
         ts = self.adapter.get_collection('objects')
-        if isinstance(tid, str):
+        if isinstance(tid, (str, unicode)):
             q = {'name': tid, 'kind': 'tree'}
         else:
             q = {'_id': tid, 'kind': 'tree'}
 
         return list(ts.find(q).sort('_id', -1).limit(1))[0]
 
+    def _update_head(self, ref_name, kind):
+        m = self.adapter.get_collection('meta')
+        m.update({'name': 'HEAD'}, {'$set': {'ref': ref_name,
+                                             'kind': kind}})
+
     def _get_head(self):
-        m=self.adapter.get_collection('meta')
+        m = self.adapter.get_collection('meta')
 
         return m.find_one({'name': 'HEAD'})
 
