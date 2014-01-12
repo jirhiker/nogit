@@ -26,7 +26,7 @@ from pymongo import MongoClient
 class MongoAdapter(HasTraits):
     host=Str('localhost')
     port=Int(27017)
-    database_name=Str('mongit')
+    database_name=Str('nogit')
 
     def __init__(self, *args, **kw):
         super(MongoAdapter, self).__init__(*args, **kw)
