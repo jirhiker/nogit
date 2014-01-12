@@ -15,102 +15,107 @@
 #===============================================================================
 
 #============= enthought library imports =======================
-from datetime import datetime
 import hashlib
+from pymongo.errors import CollectionInvalid
 from traits.api import HasTraits, Any
-from traitsui.api import View, Item
+
 
 #============= standard library imports ========================
 #============= local library imports  ==========================
-class NoBranchError(BaseException):
-    def __init__(self, name):
-        super(NoBranchError, self).__init__()
-        self._name = name
-
-    def __repr__(self):
-        return 'No branch named "{}"'.format(self._name)
-
 
 class GitEngine(HasTraits):
-    adapter = Any
+    adapter=Any
 
-    @property
-    def master(self):
-        """
-            return the master ref
-        """
-        return self._get_ref('master')
+
+    #porcelain
+    def drop_database(self):
+        self.adapter.drop_database()
 
     def init(self):
         """
             add some defaults
         """
-        m = self.adapter.get_collection('meta')
+        #make empty collections
+        try:
+            self.adapter.create_collection('commits')
+            self.adapter.create_collection('objects')
+        except CollectionInvalid:
+            pass
+
+        m = self.adapter.get_collection('HEAD')
         if not m.find_one({'name': 'HEAD'}):
             m.insert({'name': 'HEAD', 'ref': 'master', 'kind': 'head'})
 
         if not self._get_ref('master'):
             self.add_ref('master', None)
 
-    def checkout(self, name):
+        m = self.adapter.get_collection('index')
+        if not m.find_one({'kind': 'index'}):
+            m.insert({'kind': 'index',
+                      'trees': [], 'blobs': [], 'objects': []})
+
+        self.add_tree('/')
+
+    def add(self, parent, name, text):
         """
-            checkout a ref. (branch or tag)
-
+            add a blob to the staging area
         """
-        ref = self._get_ref(name)
-        if ref is None:
-            raise NoBranchError(name)
-        else:
-            self._update_head(ref['name'], ref['kind'])
+        col = self.adapter.get_collection('index')
+        objects_col = self.adapter.get_collection('objects')
 
-    def plog(self):
+        idx=self.get_index()
+
+        blobs=idx['blobs']
+        objects =idx['objects']
+
+        sha = self._digest(parent, name, text)
+
+        blob=objects_col.find_one({'sha1':sha})
+        if not blob:
+            blob = objects_col.find_one({'path_sha1': self._digest(parent, name)})
+            if not blob:
+                nbid=objects_col.insert(self._create_blob(parent, name, text))
+                blobs.append(nbid)
+                objects.append((parent, nbid, 'new file'))
+                col.update({'_id':idx['_id']}, {'$set':{'blobs':blobs, 'objects':objects}})
+
+                #add to working tree
+                wtree=self._get_working_tree()
+                blobs=wtree['blobs']
+                blobs.append(nbid)
+                objects_col.update({'_id':wtree['_id']}, {'$set':{'blobs':blobs}})
+
+            else:
+                objects_col.update({'_id':blob['_id']}, {'$set': {'text':text, 'sha1':sha}})
+
+
+        #is sha already staged
+        # blob=col.find_one({'sha1':sha})
+        # if not blob:
+        #     #is this name already staged
+        #     blob=col.find_one({'path_sha1':self._digest(parent, name)})
+        #     if not blob:
+        #         nbid=objects_col.insert(self._create_blob(parent, name, text))
+        #         blobs.append(nbid)
+        #         objects.append((parent, nbid, 'new file'))
+        #
+        #         col.update({'_id':idx['_id']}, {'$set':{'blobs':blobs, 'objects':objects}})
+        #     else:
+        #         col.update({'_id':blob['_id']}, {'$set': {'text':text, 'sha1':sha}})
+
+    def commit(self, msg):
         """
-            print the return of self.log
         """
-        for p in self.log():
-            print p
+        wtree=self._get_working_tree()
+        if wtree:
+            self.commit_tree(msg, wtree['_id'])
 
-    def log(self):
-        """
-            return a list of formatted commit messages
-            author, date
-            sha1
-
-                message
-        """
-        template = '''commit {}
-Author: {}
-Date: {}
-
-    {}\n'''
-
-        def assemble_log(commit):
-            a = commit['author']
-            d = commit['_id'].generation_time
-            s = commit['_id']
-            m = commit['msg']
-            return template.format(s, a, d.strftime('%a %b %d %H:%M %Y'), m)
-
-        return [assemble_log(c) for c in self._walk_commits()]
-
-    def add_tag(self, name, commit_id):
-        return self.add_ref(name, commit_id, kind='tag')
-
-    def add_branch(self, name, commit_id=None):
-        """
-            add a branch named ``name``. if commit_id is None use the latest commit
-        """
-        if not commit_id:
-            commit_id = self.adapter.get_last('commits')['_id']
-
-        b = self.add_ref(name, commit_id)
-
-        #update HEAD
-        self._update_head(name, 'head')
-        # h = self.adapter.get_collection('HEAD')
-        # h.update({'name': 'HEAD'}, {'$set': {'ref': name, 'kind': 'head'}})
-        # self.checkout(name)
-        return b
+    #plumbing
+    def add_tree(self, name, kind='wtree'):
+        if not self._get_tree(name):
+            objects=self.adapter.get_collection('objects')
+            objects.insert({'name':name, 'kind':kind,
+                            'blobs':[], 'trees':[]})
 
     def add_ref(self, name, commit_id, kind='head'):
         col = self.adapter.get_collection('refs')
@@ -126,6 +131,16 @@ Date: {}
             col = self.adapter.get_collection('refs')
             col.update(ref, {'$set': {'cid': commit_id}})
 
+    def get_ref(self,name):
+        self._get_ref(name)
+
+    def get_index(self):
+        col = self.adapter.get_collection('index')
+        return col.find_one({'kind': 'index'})
+
+    def get_working_tree(self):
+        return self._get_working_tree()
+
     def commit_tree(self, msg, tree_id):
         if not tree_id:
             return
@@ -134,6 +149,7 @@ Date: {}
 
         commits = self.adapter.get_collection('commits')
         p = self.adapter.get_last('commits')
+
         tree = self._get_tree(tree_id)
 
         cid = commits.insert({
@@ -146,93 +162,23 @@ Date: {}
         head = self._get_head()
         self.update_ref(head['ref'], cid)
 
-    def add_tree(self, name, blobs=None, trees=None):
-        objects = self.adapter.get_collection('objects')
+        #clear staging area
+        self._clean_stage()
 
-        obj = objects.insert({'name': name,
-                              'kind': 'tree',
-                              'blobs': blobs,
-                              'trees': trees})
-        return obj
+        #make new working tree
+        objects=self.adapter.get_collection('objects')
 
-    def add_subtree(self, parent, name, blobs=None, trees=None):
-        tree = self._get_tree(parent)
+        objects.update({'_id':tree['_id']}, {'$set':{'kind':'tree'}})
 
-        objs = self.adapter.get_collection('objects')
-        if trees:
-            trees = [self._get_tree(ti)['_id'] for ti in trees]
-
-        ntid = objs.insert({'name': name,
-                            'kind': 'tree',
-                            'blobs': blobs,
-                            'trees': trees})
-
-        ptrees = tree['trees']
-        if not ptrees:
-            ptrees = []
-
-        ptrees.append(ntid)
-        tree['trees'] = ptrees
         tree.pop('_id')
-        return objs.insert(tree)
+        objects.insert(tree)
 
-    def modify_blob(self, tree, name, text):
-        tree = self._get_tree(tree)
+    def get_commits(self):
+        return list(self._walk_commits())
 
-        objs = self.adapter.get_collection('objects')
-        r = objs.find_one({'name': name})
-        if r:
-            rid = r['_id']
-            if rid in tree['blobs']:
-                #insert new blob
-                r.pop('_id')
-                r['text'] = text
-                nid = objs.insert(r)
-
-                blobs = tree['blobs']
-                blobs.remove(rid)
-                blobs.append(nid)
-
-                #insert new tree
-                tree.pop('_id')
-                return objs.insert(tree)
-
-    def add_blob(self, tree, name, text, new_tree=True):
-        tree = self._get_tree(tree)
-        tid = tree['_id']
-        blobs = tree['blobs']
-
-        objs = self.adapter.get_collection('objects')
-        gid = self._digest(name, text)
-
-        r = objs.find_one({'gid': gid})
-        if r:
-            bid = r['_id']
-        else:
-            bid = objs.insert({'name': name,
-                               'kind': 'blob',
-                               'text': text,
-                               'gid': gid})
-
-        if not blobs:
-            #use existing tree doc
-            objs.update({'_id': tree['_id']},
-                        {'$set': {'blobs': [bid]}})
-        else:
-            blobs.append(bid)
-            if new_tree:
-                #add new tree
-                tree.pop('_id')
-                tree['blobs'] = blobs
-                tid = objs.insert(tree)
-            else:
-                objs.update(tree, {'$set': {'blobs': blobs}})
-
-        return tid
-
+    #private
     def _walk_commits(self):
         """
-
         """
 
         def gen():
@@ -249,10 +195,59 @@ Date: {}
 
         return gen()
 
+    def _clean_stage(self):
+        idx = self.adapter.get_collection('index')
+        idx.update({'kind': 'index'}, {'$set': {'objects': [],
+                                                'trees': [],
+                                                'blobs': []}})
+
     def _get_commit(self, cid):
         ts = self.adapter.get_collection('commits')
         q = {'_id': cid}
         return ts.find_one(q)
+
+    def _get_tree(self, name):
+        if isinstance(name, (str, unicode)):
+            wtree=self._get_working_tree()
+            if wtree and wtree['name']!=name:
+                col=self.adapter.get_collection('objects')
+                for p in name.split('/'):
+                    if not p:
+                        continue
+
+                    for ti in wtree['trees']:
+                        tt=col.find_one({'_id':ti})
+                        if tt['name']==name:
+                            wtree=tt
+            return wtree
+
+        else:
+            objects=self.adapter.get_collection('objects')
+            return objects.find_one({'_id':name})
+
+    def _get_working_tree(self):
+        objects=self.adapter.get_collection('objects')
+        #get the current commit
+        #get the tree from the current commit
+        return objects.find_one({'kind':'wtree'})
+
+        # #if no current commit use latest root tree doc
+        # commits=self.adapter.get_collection('commits')
+        # if not commits.count():
+        #     cursor=objects.find({'kind':'tree','name':'/'}).sort('_id',-1).limit(1)
+        #     if cursor.count():
+        #         return cursor[0]
+        # else:
+        #     ref=self._get_head()['ref']
+        #     cid=self._get_ref(ref)['cid']
+        #     commit=commits.find_one({'_id':cid})
+        #     return objects.find_one({'_id':commit['tid']})
+
+    def _create_blob(self, parent, name, text):
+        sha=self._digest(parent, name, text)
+        return {'name':name, 'text':text,
+                'path_sha1':self._digest(parent, name),
+                'sha1':sha}
 
     def _get_ref(self, rid):
         ts = self.adapter.get_collection('refs')
@@ -263,23 +258,13 @@ Date: {}
 
         return ts.find_one(q)
 
-    def _get_tree(self, tid):
-        ts = self.adapter.get_collection('objects')
-        if isinstance(tid, (str, unicode)):
-            q = {'name': tid, 'kind': 'tree'}
-        else:
-            q = {'_id': tid, 'kind': 'tree'}
-
-        return list(ts.find(q).sort('_id', -1).limit(1))[0]
-
     def _update_head(self, ref_name, kind):
         m = self.adapter.get_collection('meta')
         m.update({'name': 'HEAD'}, {'$set': {'ref': ref_name,
                                              'kind': kind}})
 
     def _get_head(self):
-        m = self.adapter.get_collection('meta')
-
+        m = self.adapter.get_collection('HEAD')
         return m.find_one({'name': 'HEAD'})
 
     def _digest(self, *args):
@@ -287,6 +272,10 @@ Date: {}
         for ai in args:
             sha.update(ai)
         return sha.hexdigest()
+
+    @property
+    def ncollections(self):
+        return len(self.adapter.collection_names(include_system_collections=False))
 
 #============= EOF =============================================
 

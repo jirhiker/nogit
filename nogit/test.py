@@ -1,15 +1,28 @@
-from nogit.git_engine import GitEngine
+from nogit.git_engine1 import GitEngine
 from nogit.mongo_adapter import MongoAdapter
 
 engine = GitEngine(adapter=MongoAdapter())
 
-# t=engine.add_blob('root','file3', 'branching test')
+# engine.checkout('test')
+
+# engine.add_blob('root','file4', 'modified index test')
 # engine.commit_tree('added file3',t)
 # engine.add_branch('test')
-engine.checkout('test')
-engine.plog()
+# engine.plog()
+engine.init()
 
-# engine.init()
+# engine.add_subtree('/','test1')
+# engine.add_blob('/test1','file2','version1')
+# engine.add_blob('/','file1','version1')
+# engine.add_blob('/','file1','version1asdf')
+# engine.modify_blob('/','file2','version1dasjjjjkkkkjkj')
+# engine.commit('first commit')
+engine.commit('second commit')
+# engine.commit('fifth commit')
+engine.pstatus()
+
+# engine.commit('first commit')
+
 #
 # ## first
 # tree_id=engine.add_tree('root')

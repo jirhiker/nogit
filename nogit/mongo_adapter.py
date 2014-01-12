@@ -32,6 +32,9 @@ class MongoAdapter(HasTraits):
         super(MongoAdapter, self).__init__(*args, **kw)
         self.connect()
 
+    def drop_database(self):
+        self._client.drop_database(self.database_name)
+
     def connect(self):
         self._client = MongoClient(self.host, self.port)
         self._db = self._client[self.database_name]
@@ -54,6 +57,9 @@ class MongoAdapter(HasTraits):
         except IndexError:
             return
 
+    def __getattr__(self, item):
+        if hasattr(self._db, item):
+            return getattr(self._db, item)
 
 
 
