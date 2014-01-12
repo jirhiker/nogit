@@ -13,8 +13,8 @@ Collections
 1. commits- contains the commit documents
 2. objects- contains blob and tree documents
 3. refs- cpntains head and tag documents
-4. meta- contains the HEAD document
-5. index- holds staging area document
+4. HEAD- contains the HEAD document
+5. index- contains staging area document
 
 
 use a serverless
