@@ -22,11 +22,13 @@ engine=GitEngine(adapter=MongoAdapter())
 
 # #fourth
 # #add subtree
-trees=['root']
+trees=[]
 blobs=[]
-tree_id=engine.add_subtree('root','bak', trees=trees, blobs=blobs)
-engine.commit_tree('fourth commit', tree_id)
+# tree_id=engine.add_subtree('root','foo', trees=trees, blobs=blobs)
+# engine.commit_tree('fifth commit', tree_id)
 
+# print engine.master
+engine.init()
 
 # db=engine.adapter._db
 

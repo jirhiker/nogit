@@ -43,7 +43,7 @@ class MongoAdapter(HasTraits):
         col=self._db[collection]
         return col
 
-    def _get_last(self, collection):
+    def get_last(self, collection):
         """
             return the last document in collection
         """

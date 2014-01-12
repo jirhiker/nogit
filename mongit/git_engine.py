@@ -23,8 +23,59 @@ from traitsui.api import View, Item
 #============= standard library imports ========================
 #============= local library imports  ==========================
 
+
 class GitEngine(HasTraits):
     adapter = Any
+
+    @property
+    def master(self):
+        """
+            return the master ref
+        """
+        return self._get_ref('master')
+
+    def init(self):
+        """
+            add some defaults
+        """
+        m=self.adapter.get_collection('meta')
+        if not m.find_one({'name':'HEAD'}):
+            m.insert({'name':'HEAD','ref':'master','kind':'head'})
+
+        if not self._get_ref('master'):
+            self.add_ref('master', None)
+
+    def add_tag(self, name, commit_id):
+        self.add_ref(name, commit_id, kind='tag')
+
+    def add_ref(self, name, commit_id, kind='head'):
+        col = self.adapter.get_collection('refs')
+        col.insert({'cid': commit_id,
+                    'kind': kind,
+                    'name': name})
+
+    def add_branch(self, name, commit_id=None):
+        """
+            add a branch named ``name``. if commit_id is None use the latest commit
+        """
+        if not commit_id:
+            commit_id=self.adapter.get_last('commits')
+
+        b= self.add_ref(name, commit_id)
+
+        #update HEAD
+        h=self.adapter.get_collection('HEAD')
+        h.update({'name':'HEAD'}, {'$set':{'ref':name, 'kind':'head'}})
+
+        return b
+
+    def update_ref(self, name, commit_id):
+        ref = self._get_ref(name)
+        if ref is None:
+            self.add_ref(name, commit_id)
+        else:
+            col = self.adapter.get_collection('refs')
+            col.update(ref, {'$set': {'cid': commit_id}})
 
     def commit_tree(self, msg, tree_id):
         if not tree_id:
@@ -33,14 +84,18 @@ class GitEngine(HasTraits):
         author = 'foo'
 
         commits = self.adapter.get_collection('commits')
-        p = self.adapter._get_last('commits')
+        p = self.adapter.get_last('commits')
         tree = self._get_tree(tree_id)
 
-        commits.insert({
+        cid = commits.insert({
             'pid': p['_id'] if p else None,
             'tid': tree['_id'],
             'msg': msg,
-            'author': author })
+            'author': author})
+
+        #update the current head to point to latest reference
+        head=self._get_head()
+        self.update_ref(head, cid)
 
     def add_tree(self, name, blobs=None, trees=None):
         objects = self.adapter.get_collection('objects')
@@ -56,7 +111,7 @@ class GitEngine(HasTraits):
 
         objs = self.adapter.get_collection('objects')
         if trees:
-            trees=[self._get_tree(ti)['_id'] for ti in trees]
+            trees = [self._get_tree(ti)['_id'] for ti in trees]
 
         ntid = objs.insert({'name': name,
                             'kind': 'tree',
@@ -65,7 +120,7 @@ class GitEngine(HasTraits):
 
         ptrees = tree['trees']
         if not ptrees:
-            ptrees=[]
+            ptrees = []
 
         ptrees.append(ntid)
         tree['trees'] = ptrees
@@ -106,7 +161,7 @@ class GitEngine(HasTraits):
             bid = r['_id']
         else:
             bid = objs.insert({'name': name,
-                               'kind':'blob',
+                               'kind': 'blob',
                                'text': text,
                                'gid': gid})
 
@@ -126,14 +181,29 @@ class GitEngine(HasTraits):
 
         return tid
 
+    def _get_ref(self, rid):
+        ts = self.adapter.get_collection('refs')
+        if isinstance(rid, str):
+            q = {'name': rid, 'kind': 'head'}
+        else:
+            q = {'_id': rid, 'kind': 'head'}
+
+        return ts.find_one(q)
+        # return list(ts.find(q).sort('_id', -1).limit(1))[0]
+
     def _get_tree(self, tid):
         ts = self.adapter.get_collection('objects')
         if isinstance(tid, str):
-            q = {'name': tid, 'kind':'tree'}
+            q = {'name': tid, 'kind': 'tree'}
         else:
-            q = {'_id': tid,  'kind':'tree'}
+            q = {'_id': tid, 'kind': 'tree'}
 
         return list(ts.find(q).sort('_id', -1).limit(1))[0]
+
+    def _get_head(self):
+        m=self.adapter.get_collection('meta')
+
+        return m.find_one({'name': 'HEAD'})
 
     def _digest(self, *args):
         sha = hashlib.sha1()
