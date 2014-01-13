@@ -283,13 +283,19 @@ Date: {}
     def extract_diff(self, d):
         lefts=[]
         rights=[]
+        def make_l(ll):
+            ll=ll[1:]
+            ll=ll.strip()
+            if ll.endswith(','):
+                ll = ll[:-1]
+            return ll
+
         for l in d:
+            print l
             if l[0]=='-':
-                l=l.strip().split(':')[1].strip()
-                lefts.append(l)
+                lefts.append(make_l(l))
             elif l[0]=='+':
-                l = l.strip().split(':')[1].strip()
-                rights.append(l)
+                rights.append(make_l(l))
 
         return zip(lefts, rights)
 

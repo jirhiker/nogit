@@ -47,9 +47,24 @@ class PychronEngineTestCase(unittest.TestCase):
         d=self.engine.diff('/minnabluff/51000/51000-01A', c1, c2)
         ls,rs=zip(*self.engine.extract_diff(d))
 
-        self.assertEqual(ls[0],'10')
-        self.assertEqual(rs[0],'22')
+        self.assertEqual(ls[0],'"Ar40": 10')
+        self.assertEqual(rs[0],'"Ar40": 22')
 
+        self.engine.add('/minnabluff/51000', '51000-01A', {'identifier': '51000', 'aliquot': '01', 'step': 'A',
+                                                           'isotopes': {'Ar40':22, 'Ar39': 23}})
+
+        c3 = self.engine.commit('third commit')
+        d = self.engine.diff('/minnabluff/51000/51000-01A', c1, c3)
+        ls, rs = zip(*self.engine.extract_diff(d))
+
+        self.assertEqual(ls[0], '"Ar40": 10')
+        self.assertEqual(rs[0], '"Ar40": 22')
+        self.assertEqual(rs[1], '"Ar39": 23')
+
+        d = self.engine.diff('/minnabluff/51000/51000-01A', c2, c3)
+        ls, rs = zip(*self.engine.extract_diff(d))
+        self.assertEqual(rs[0], '"Ar40": 22')
+        self.assertEqual(rs[1], '"Ar39": 23')
 
 
 if __name__ == '__main__':
