@@ -1,3 +1,5 @@
+from nogit.errors import NoBranchError
+
 __author__ = 'ross'
 
 import unittest
@@ -44,6 +46,9 @@ class EngineTestCase(unittest.TestCase):
         self.engine.commit('test commit')
 
         self.engine.add('/test', 'file3', 'version1234')
+        self.engine.add('/test/foo', 'file5', 'version1')
+        self.engine.add('/test/foo/bar', 'file6', 'version1')
+
         # self.engine.add('/test', 'file3', 'version1234')
         # o = self.engine.adapter.get_collection('objects')
         # self.assertEqual(o.count(), 7)
@@ -55,6 +60,31 @@ class EngineTestCase(unittest.TestCase):
         self.engine.commit('test commit 2')
         commits=self.engine.get_commits()
         self.assertEqual(len(commits), 2)
+
+    def test_structure(self):
+        top=list(self.engine.walk_tree())
+        self.assertEqual(len(top),10)
+
+    def test_add_branch(self):
+        self.engine.branch('develop')
+
+        branches=self.engine.get_branches()
+        self.assertEqual(len(list(branches)), 2)
+
+    def test_checkout(self):
+        self.assertRaises(NoBranchError, self.engine.checkout, 'dev')
+
+        self.engine.checkout('develop')
+        ref=self.engine.get_head_ref()
+        self.assertEqual(ref,'develop')
+
+        self.engine.add('/dev','filedev','version1')
+        self.engine.commit('add dev')
+
+        dev_top=list(self.engine.walk_tree('develop'))
+        master_top=list(self.engine.walk_tree('master'))
+
+        self.assertNotEqual(dev_top, master_top)
 
     # def test_commit_staged(self):
     #     msg='test commit message'

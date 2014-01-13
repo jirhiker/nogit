@@ -22,13 +22,7 @@ from traitsui.api import View, Item
 
 #============= standard library imports ========================
 #============= local library imports  ==========================
-class NoBranchError(BaseException):
-    def __init__(self, name):
-        super(NoBranchError, self).__init__()
-        self._name = name
 
-    def __repr__(self):
-        return 'No branch named "{}"'.format(self._name)
 
 
 class GitEngine(HasTraits):
