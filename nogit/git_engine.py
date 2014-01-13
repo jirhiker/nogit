@@ -117,11 +117,16 @@ Date: {}
         return [assemble_log(c) for c in self.walk_commits()]
 
     def diff(self, path, c1, c2):
-        a=self.get_blob(path, c1)
-        print 'commit',c1, 'blob', a
 
-        b=self.get_blob(path, c2)
-        print 'commit',c2, 'blob',b
+        a=self.get_object(path, c1)
+        # print 'commit',c1, 'blob', a
+
+        b=self.get_object(path, c2)
+        # print 'commit',c2, 'blob',b
+
+        if a['kind'] == 'tree':
+            a=list(self.walk_tree(a))
+            b=list(self.walk_tree(b))
 
         d=Differ(a,b)
         return d.diff()
@@ -291,20 +296,20 @@ Date: {}
             return ll
 
         for l in d:
-            print l
+            # print l
             if l[0]=='-':
                 lefts.append(make_l(l))
             elif l[0]=='+':
                 rights.append(make_l(l))
 
-        return zip(lefts, rights)
+        return lefts, rights
 
-    def get_blob(self, path, commit):
+    def get_object(self, path, commit):
         commit=self._get_commit(commit)
         objects=self.adapter.get_collection('objects')
         tree=objects.find_one({'_id':commit['tid']})
         # print 'ffff', commit['_id'], tree['_id']
-        for bi in self.walk_tree(tree, return_object=True, blobs_only=True):
+        for bi in self.walk_tree(tree, return_object=True):
             # print bi['name'], bi['_id']
             if bi['name']==path:
                 return bi
@@ -515,6 +520,7 @@ Date: {}
             pname = '{}/{}'.format(parent, name)
 
         doc.update({'name': pname,
+                    'kind':'blob',
                     'path_sha1': self._digest(parent, name),
                     'sha1': sha})
         return doc

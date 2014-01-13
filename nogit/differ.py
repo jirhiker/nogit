@@ -26,19 +26,17 @@ from traitsui.api import View, Item
 class Differ(HasTraits):
     def __init__(self, left, right, *args, **kw):
         super(Differ, self).__init__(*args, **kw)
+
+        if isinstance(left, dict):
+            left=dumps(left, indent=4).split('\n')
+        if isinstance(right, dict):
+            right = dumps(right, indent=4).split('\n')
+
         self._left=left
         self._right=right
 
     def diff(self):
-        # lt=json.load(self._left)
-        lt=dumps(self._left, indent=4)
-
-        # rt = json.load(self._right)
-        rt = dumps(self._right, indent=4)
-        # print 'lt', lt
-        # print 'rt', rt
-
-        return ndiff(lt.split('\n'),rt.split('\n'))
+        return ndiff(self._left, self._right)
 
 
 #============= EOF =============================================

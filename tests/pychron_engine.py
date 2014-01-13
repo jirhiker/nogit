@@ -45,7 +45,7 @@ class PychronEngineTestCase(unittest.TestCase):
         c2=self.engine.commit('second commit')
 
         d=self.engine.diff('/minnabluff/51000/51000-01A', c1, c2)
-        ls,rs=zip(*self.engine.extract_diff(d))
+        ls,rs=self.engine.extract_diff(d)
 
         self.assertEqual(ls[0],'"Ar40": 10')
         self.assertEqual(rs[0],'"Ar40": 22')
@@ -55,17 +55,29 @@ class PychronEngineTestCase(unittest.TestCase):
 
         c3 = self.engine.commit('third commit')
         d = self.engine.diff('/minnabluff/51000/51000-01A', c1, c3)
-        ls, rs = zip(*self.engine.extract_diff(d))
+        ls, rs = self.engine.extract_diff(d)
 
         self.assertEqual(ls[0], '"Ar40": 10')
         self.assertEqual(rs[0], '"Ar40": 22')
         self.assertEqual(rs[1], '"Ar39": 23')
 
         d = self.engine.diff('/minnabluff/51000/51000-01A', c2, c3)
-        ls, rs = zip(*self.engine.extract_diff(d))
+        ls, rs = self.engine.extract_diff(d)
         self.assertEqual(rs[0], '"Ar40": 22')
         self.assertEqual(rs[1], '"Ar39": 23')
 
+        #add new file to the tree
+        self.engine.add('/minnabluff/51000', '51000-01B', {'identifier': '51000', 'aliquot': '01', 'step': 'A',
+                                                           'isotopes': {'Ar40': 22, 'Ar39': 23}})
+        c4 = self.engine.commit('fourth commit')
+
+        #test diff of trees for two commits
+        #show files and directories added and deleted
+        #flatten tree starting at path
+        #use ndiff to identify added/sub
+        d=self.engine.diff('/minnabluff/51000', c1, c4)
+        ls, rs = self.engine.extract_diff(d)
+        self.assertEqual(rs[0], '/minnabluff/51000/51000-01B')
 
 if __name__ == '__main__':
     unittest.main()
