@@ -28,7 +28,7 @@ changes can be pushed, pulled, merged from the remote database
 
 phase 1. local
 --------------
-1. add branching
+1. **add branching**
 2. add tagging
 3. **add subtree**
 5. diff

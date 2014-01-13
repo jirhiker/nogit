@@ -88,7 +88,6 @@ class GitEngine(HasTraits):
 
 {}
 '''
-
         def assemble_object(tree, oi, action):
             blob=self._get_blob(oi)
             if tree=='/':

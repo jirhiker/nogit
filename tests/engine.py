@@ -63,7 +63,7 @@ class EngineTestCase(unittest.TestCase):
 
     def test_structure(self):
         top=list(self.engine.walk_tree())
-        self.assertEqual(len(top),10)
+        self.assertEqual(len(top),12)
 
     def test_add_branch(self):
         self.engine.branch('develop')
@@ -86,7 +86,37 @@ class EngineTestCase(unittest.TestCase):
 
         self.assertNotEqual(dev_top, master_top)
 
-    # def test_commit_staged(self):
+    def test_commits(self):
+        dev=list(self.engine.walk_commits('develop'))
+        master=list(self.engine.walk_commits('master'))
+
+        self.assertEqual(len(dev),3)
+        self.assertEqual(len(master),2)
+
+    def test_log(self):
+        self.engine.checkout('develop')
+        ps=list(self.engine.log())
+        self.assertEqual(len(ps), 3)
+
+        self.engine.checkout('master')
+        ps = list(self.engine.log())
+        self.assertEqual(len(ps), 2)
+
+    def test_status(self):
+        self.engine.checkout('develop')
+        self.engine.add('/dev', 'filedev2', 'version1')
+        self.engine.add('/dev', 'filedev3', 'version1')
+
+        ps=list(self.engine.status())
+        self.assertEqual(len(ps), 6)
+
+        self.engine.commit('add dev2')
+
+        ps = list(self.engine.status())
+        self.assertEqual(len(ps), 5)
+
+
+        # def test_commit_staged(self):
     #     msg='test commit message'
     #     self.engine.commit(msg)
     #

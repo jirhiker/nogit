@@ -22,6 +22,7 @@ from traits.api import HasTraits, Any
 
 #============= standard library imports ========================
 #============= local library imports  ==========================
+from nogit.differ import Differ
 from nogit.errors import NoBranchError
 
 
@@ -55,7 +56,70 @@ class Blob(GitObject):
 class GitEngine(HasTraits):
     adapter = Any
 
+    #print porcelain
+    def pdiff(self, a,b):
+        d=self.diff(a,b)
+        for di in d:
+            print di
+
+    def plog(self):
+        for p in self.log():
+            print p
+
+    def pstatus(self):
+        for p in self.status():
+            print p
+
     #porcelain
+    def status(self):
+        idx = self.get_index()
+        template = '''# On branch "{}"
+    # Changes to be committed:
+
+    {}
+    '''
+        def assemble_object(tree, oi, action):
+            blob = self._get_object(oi)
+            if tree == '/':
+                tree = ''
+            else:
+                tree = '{}/'.format(tree[1:])
+
+            return '#        {}:    {}{}'.format(action, tree, blob['name'])
+
+        head = self._get_head()
+        branch = head['ref']
+        changes = '\n'.join([assemble_object(*o) for o in idx['objects']])
+        txt = template.format(branch, changes)
+        return txt.split('\n')
+
+    def log(self):
+        """
+            return a list of formatted commit messages
+            author, date
+            sha1
+
+                message
+        """
+        template = '''commit {}
+Author: {}
+Date: {}
+
+    {}\n'''
+
+        def assemble_log(commit):
+            a = commit['author']
+            d = commit['_id'].generation_time
+            s = commit['_id']
+            m = commit['msg']
+            return template.format(s, a, d.strftime('%a %b %d %H:%M %Y'), m)
+
+        return [assemble_log(c) for c in self.walk_commits()]
+
+    def diff(self, a, b):
+        d=Differ(a,b)
+        return d
+
     def drop_database(self):
         self.adapter.drop_database()
 
@@ -223,12 +287,11 @@ class GitEngine(HasTraits):
     def add_tree(self, name, kind='wtree', blobs=None):
         if blobs is None:
             blobs = []
-            # print name, self._get_tree(name)
+
         if not self._get_tree(name):
             objects = self.adapter.get_collection('objects')
             oid = objects.insert({'name': name, 'kind': kind,
                                   'blobs': blobs, 'trees': []})
-            # return objects.find({'_id':oid})
             return oid
 
     def add_ref(self, name, commit_id, kind='head'):
@@ -288,27 +351,42 @@ class GitEngine(HasTraits):
         objects.insert(tree)
 
     def get_commits(self):
-        return list(self._walk_commits())
+        return list(self.walk_commits())
 
     def get_head_ref(self):
         return self._get_head()['ref']
 
+    def walk_commits(self, ref=None):
+        """
+        """
+        if ref is None:
+            head = self._get_head()
+            ref = head['ref']
+
+        def gen():
+            cid = self._get_ref(ref)['cid']
+            while 1:
+                commit = self._get_commit(cid)
+                yield commit
+                cid = commit['pid']
+                if not cid:
+                    break
+
+        return gen()
+
     #private
     def _get_parent_tree(self, path):
         wtree = self._get_working_tree()
-        # print '1',path, wtree
         if path == '/':
             return wtree
         else:
             args = path.split('/')
-            # print '2',args
             if len(args) > 2:
                 name = '/'.join(args[:-1])
             else:
                 name = '/'
 
             r = self._get_tree(name)
-            # print '3', name, r
             return r
 
     def _is_staged(self, blob):
@@ -318,24 +396,6 @@ class GitEngine(HasTraits):
             # print oi, blob['_id']
             if oi == blob['_id']:
                 return True
-
-    def _walk_commits(self):
-        """
-        """
-
-        def gen():
-            head = self._get_head()
-            ref = head['ref']
-            ref = self._get_ref(ref)
-            cid = ref['cid']
-            while 1:
-                commit = self._get_commit(cid)
-                yield commit
-                cid = commit['pid']
-                if not cid:
-                    break
-
-        return gen()
 
     def _clean_stage(self):
         idx = self.adapter.get_collection('index')
@@ -410,6 +470,10 @@ class GitEngine(HasTraits):
     def _get_head(self):
         m = self.adapter.get_collection('HEAD')
         return m.find_one({'name': 'HEAD'})
+
+    def _get_object(self, value, key='_id'):
+        m = self.adapter.get_collection('objects')
+        return m.find_one({key: value})
 
     def _digest(self, *args):
         sha = hashlib.sha1()
