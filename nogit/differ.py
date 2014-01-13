@@ -16,6 +16,7 @@
 
 #============= enthought library imports =======================
 from difflib import ndiff
+from bson.json_util import dumps
 from traits.api import HasTraits
 from traitsui.api import View, Item
 
@@ -29,10 +30,15 @@ class Differ(HasTraits):
         self._right=right
 
     def diff(self):
-        lt=self._left['text']
-        rt=self._right['text']
+        # lt=json.load(self._left)
+        lt=dumps(self._left, indent=4)
 
-        return ndiff([lt], [rt])
+        # rt = json.load(self._right)
+        rt = dumps(self._right, indent=4)
+        # print 'lt', lt
+        # print 'rt', rt
+
+        return ndiff(lt.split('\n'),rt.split('\n'))
 
 
 #============= EOF =============================================

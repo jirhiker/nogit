@@ -116,9 +116,15 @@ Date: {}
 
         return [assemble_log(c) for c in self.walk_commits()]
 
-    def diff(self, a, b):
+    def diff(self, path, c1, c2):
+        a=self.get_blob(path, c1)
+        print 'commit',c1, 'blob', a
+
+        b=self.get_blob(path, c2)
+        print 'commit',c2, 'blob',b
+
         d=Differ(a,b)
-        return d
+        return d.diff()
 
     def drop_database(self):
         self.adapter.drop_database()
@@ -172,7 +178,7 @@ Date: {}
         self._update_head(name, 'head')
         return b
 
-    def add(self, parent, name, text):
+    def add(self, parent, name, doc):
         """
             add a blob to the staging area
         """
@@ -184,13 +190,13 @@ Date: {}
         blobs = idx['blobs']
         objects = idx['objects']
 
-        sha = self._digest(parent, name, text)
+        sha = self._digest(parent, name, doc)
 
         blob = objects_col.find_one({'sha1': sha})
         if not blob:
             blob = objects_col.find_one({'path_sha1': self._digest(parent, name)})
             if not blob:
-                nbid = objects_col.insert(self._create_blob(parent, name, text))
+                nbid = objects_col.insert(self._create_blob(parent, name, doc))
                 blobs.append(nbid)
                 objects.append((parent, nbid, 'new file'))
                 col.update({'_id': idx['_id']}, {'$set': {'blobs': blobs, 'objects': objects}})
@@ -217,48 +223,91 @@ Date: {}
             else:
                 # if blob is already in staging area
                 if self._is_staged(blob):
+                    print 'staged'
+                    doc['sha']=sha
                     objects_col.update({'_id': blob['_id']},
-                                       {'$set': {'text': text, 'sha1': sha}})
+                                       {'$set': doc})
                 else:
-                    nbid = objects_col.insert(self._create_blob(parent, name, text))
+                    nbid = objects_col.insert(self._create_blob(parent, name, doc))
                     blobs.append(nbid)
                     objects.append((parent, nbid, 'modified'))
                     col.update({'_id': idx['_id']}, {'$set': {'blobs': blobs, 'objects': objects}})
 
-                    t = self._get_tree(parent)
-                    t.pop('_id')
-                    blobs = t['blobs']
-                    for bid in blobs:
-                        bi = objects_col.find_one({'_id': bid})
-                        if bi['path_sha1'] == self._digest(parent, name):
-                            blobs.remove(bid)
+                    #make new tree
+                    args=parent.split('/')
+                    n=len(args)
+                    for i in range(n):
+                        d=n-i
+                        p='/'.join(args[:d])
+                        if not p:
+                            p='/'
 
-                    blobs.append(nbid)
-                    t['blobs'] = blobs
-                    ntid = objects_col.insert(t)
-                    wtree = self._get_working_tree()
-                    trees = wtree['trees']
-                    for tid in trees:
-                        tt = objects_col.find_one({'_id': tid})
-                        if tt['name'] == parent:
-                            trees.remove(tid)
+                        t=self._get_tree(p)
+                        pid=t['_id']
+                        t.pop('_id')
+                        if i==0:
+                            blobs = t['blobs']
+                            for bid in blobs:
+                                bi = objects_col.find_one({'_id': bid})
+                                if bi['path_sha1'] == self._digest(parent, name):
+                                    blobs.remove(bid)
+                            blobs.append(nbid)
+                            t['blobs'] = blobs
+                            ntid = objects_col.insert(t)
+                            ppath = p
+
+                        else:
+                            trees=t['trees']
+                            for tid in t['trees']:
+                                ti=objects_col.find_one({'_id':tid})
+                                if ti['name']==ppath:
+                                    trees.remove(tid)
+
                             trees.append(ntid)
-                            break
-                    objects_col.update({'_id': wtree['_id']}, {'$set': {'trees': trees}})
+                            t['trees']=trees
+                            if p=='/':
+                                objects_col.update({'_id':pid},{'$set':{'trees':trees}})
+                                break
+                            else:
+                                ntid=objects_col.insert(t)
+                                ppath = p
 
     def commit(self, msg):
         """
         """
         wtree = self._get_working_tree()
         if wtree:
-            self.commit_tree(msg, wtree['_id'])
+            return self.commit_tree(msg, wtree['_id'])
 
     #plumbing
+    def extract_diff(self, d):
+        lefts=[]
+        rights=[]
+        for l in d:
+            if l[0]=='-':
+                l=l.strip().split(':')[1].strip()
+                lefts.append(l)
+            elif l[0]=='+':
+                l = l.strip().split(':')[1].strip()
+                rights.append(l)
+
+        return zip(lefts, rights)
+
+    def get_blob(self, path, commit):
+        commit=self._get_commit(commit)
+        objects=self.adapter.get_collection('objects')
+        tree=objects.find_one({'_id':commit['tid']})
+        # print 'ffff', commit['_id'], tree['_id']
+        for bi in self.walk_tree(tree, return_object=True, blobs_only=True):
+            # print bi['name'], bi['_id']
+            if bi['name']==path:
+                return bi
+
     def get_branches(self):
         col = self.adapter.get_collection('refs')
         return col.find({'kind': 'head'})
 
-    def walk_tree(self, root=None):
+    def walk_tree(self, root=None, return_object=False, blobs_only=False):
         objects = self.adapter.get_collection('objects')
         if root is None:
             root = self._get_working_tree()
@@ -271,13 +320,22 @@ Date: {}
         def gen():
             for tree in root['trees']:
                 tree = objects.find_one({'_id': tree})
-                yield tree['name']
-                for di in self.walk_tree(tree):
+                if not blobs_only:
+                    ret=tree
+                    if not return_object:
+                        ret=ret['name']
+                    yield ret
+
+                for di in self.walk_tree(tree, return_object, blobs_only):
                     yield di
 
             for blob in root['blobs']:
                 blob = objects.find_one({'_id': blob})
-                yield blob['name']
+
+                if not return_object:
+                    blob=blob['name']
+
+                yield blob
 
         return gen()
 
@@ -349,6 +407,7 @@ Date: {}
 
         tree.pop('_id')
         objects.insert(tree)
+        return cid
 
     def get_commits(self):
         return list(self.walk_commits())
@@ -442,16 +501,18 @@ Date: {}
         objects = self.adapter.get_collection('objects')
         return objects.find_one({'kind': 'wtree'})
 
-    def _create_blob(self, parent, name, text):
-        sha = self._digest(parent, name, text)
+    def _create_blob(self, parent, name, doc):
+        sha = self._digest(parent, name, doc)
         if parent == '/':
             pname = '/{}'.format(name)
         else:
             pname = '{}/{}'.format(parent, name)
 
-        return {'name': pname, 'text': text,
-                'path_sha1': self._digest(parent, name),
-                'sha1': sha}
+        doc.update({'name': pname,
+                    'path_sha1': self._digest(parent, name),
+                    'sha1': sha})
+        return doc
+
 
     def _get_ref(self, rid):
         ts = self.adapter.get_collection('refs')
@@ -478,6 +539,8 @@ Date: {}
     def _digest(self, *args):
         sha = hashlib.sha1()
         for ai in args:
+            if isinstance(ai, dict):
+                ai=hashlib.sha1(repr(sorted(ai.items()))).hexdigest()
             sha.update(ai)
         return sha.hexdigest()
 
